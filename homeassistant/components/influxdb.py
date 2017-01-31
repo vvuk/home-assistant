@@ -24,6 +24,8 @@ CONF_TAGS = 'tags'
 CONF_DEFAULT_MEASUREMENT = 'default_measurement'
 CONF_OVERRIDE_MEASUREMENT = 'override_measurement'
 CONF_BLACKLIST_DOMAINS = "blacklist_domains"
+CONF_FORCE_DOMAIN_NAMING = 'use_domain_as_measurement'
+CONF_BLACKLIST_MEASUREMENT_KEYS = 'blacklist_measurement_keys'
 
 DEFAULT_DATABASE = 'home_assistant'
 DEFAULT_VERIFY_SSL = True
@@ -53,6 +55,9 @@ CONFIG_SCHEMA = vol.Schema({
         vol.Optional(CONF_TAGS, default={}):
             vol.Schema({cv.string: cv.string}),
         vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
+        vol.Optional(CONF_FORCE_DOMAIN_NAMING): cv.boolean,
+        vol.Optional(CONF_BLACKLIST_MEASUREMENT_KEYS):
+            vol.Schema(cv.ensure_list, [cv.string]),
     }),
 }, extra=vol.ALLOW_EXTRA)
 
@@ -93,6 +98,8 @@ def setup(hass, config):
     tags = conf.get(CONF_TAGS)
     default_measurement = conf.get(CONF_DEFAULT_MEASUREMENT)
     override_measurement = conf.get(CONF_OVERRIDE_MEASUREMENT)
+    force_domain_naming = conf.get(CONF_FORCE_DOMAIN_NAMING)
+    blacklist_measurement_keys = conf.get(CONF_BLACKLIST_MEASUREMENT_KEYS)
 
     try:
         influx = InfluxDBClient(**kwargs)
@@ -125,6 +132,8 @@ def setup(hass, config):
 
         if override_measurement:
             measurement = override_measurement
+        elif force_domain_naming:
+            measurement = state.domain
         else:
             measurement = state.attributes.get('unit_of_measurement')
             if measurement in (None, ''):
@@ -148,19 +157,31 @@ def setup(hass, config):
         ]
 
         for key, value in state.attributes.items():
-            if key != 'unit_of_measurement':
-                # If the key is already in fields
-                if key in json_body[0]['fields']:
-                    key = key + "_"
-                # Prevent column data errors in influxDB.
-                # For each value we try to cast it as float
-                # But if we can not do it we store the value
-                # as string add "_str" postfix to the field key
-                try:
-                    json_body[0]['fields'][key] = float(value)
-                except (ValueError, TypeError):
-                    new_key = "{}_str".format(key)
-                    json_body[0]['fields'][new_key] = str(value)
+            # if the value is None, don't record "None" as a str
+            if value is None:
+                continue
+            # If it's the special "unit_of_measurement" key, don't
+            # record it
+            # FIXME: we need to either record this, or we need to
+            # normalize metric/imperial units internally
+            if key == 'unit_of_measurement':
+                continue
+            # If the key was blacklisted in the configuraiton
+            if key in blacklist_measurement_keys:
+                continue
+            # If the state has multiple attributes with the same
+            # key (?), keep appending "_"
+            while key in json_body[0]['fields']:
+                key = key + "_"
+            # Prevent column data errors in influxDB.
+            # For each value we try to cast it as float
+            # But if we can not do it we store the value
+            # as string add "_str" postfix to the field key
+            try:
+                json_body[0]['fields'][key] = float(value)
+            except (ValueError, TypeError):
+                new_key = "{}_str".format(key)
+                json_body[0]['fields'][new_key] = str(value)
 
         json_body[0]['tags'].update(tags)
 
