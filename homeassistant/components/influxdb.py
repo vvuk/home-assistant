@@ -21,6 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONF_DB_NAME = 'database'
 CONF_TAGS = 'tags'
+CONF_TAG_KEYS = 'tag_keys'
 CONF_DEFAULT_MEASUREMENT = 'default_measurement'
 CONF_OVERRIDE_MEASUREMENT = 'override_measurement'
 CONF_BLACKLIST_DOMAINS = "blacklist_domains"
@@ -57,6 +58,8 @@ CONFIG_SCHEMA = vol.Schema({
         vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
         vol.Optional(CONF_FORCE_DOMAIN_NAMING): cv.boolean,
         vol.Optional(CONF_BLACKLIST_MEASUREMENT_KEYS):
+            vol.Schema(cv.ensure_list, [cv.string]),
+        vol.Optional(CONF_TAG_KEYS):
             vol.Schema(cv.ensure_list, [cv.string]),
     }),
 }, extra=vol.ALLOW_EXTRA)
@@ -96,6 +99,7 @@ def setup(hass, config):
     blacklist_e = set(exclude.get(CONF_ENTITIES, []))
     blacklist_d = set(exclude.get(CONF_DOMAINS, []))
     tags = conf.get(CONF_TAGS)
+    tag_keys = conf.get(CONF_TAG_KEYS)
     default_measurement = conf.get(CONF_DEFAULT_MEASUREMENT)
     override_measurement = conf.get(CONF_OVERRIDE_MEASUREMENT)
     force_domain_naming = conf.get(CONF_FORCE_DOMAIN_NAMING)
@@ -168,6 +172,10 @@ def setup(hass, config):
                 continue
             # If the key was blacklisted in the configuraiton
             if key in blacklist_measurement_keys:
+                continue
+            # If this is a tag, then it always goes in as a str
+            if key in tag_keys:
+                json_body[0]['tags'][key] = str(value)
                 continue
             # If the state has multiple attributes with the same
             # key (?), keep appending "_"
